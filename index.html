@@ -818,7 +818,11 @@ window.addEventListener('appinstalled', () => { installPrompt = null; toast('Kok
 // claude.ai önizlemesinde (window.claude) ve dosyadan açılışta çevrimdışı önbellek kurulmaz
 if ('serviceWorker' in navigator && !(window.claude && window.claude.use) && /^https:$|^http:$/.test(location.protocol)
     && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js').then(reg => reg.update()).catch(() => {});
+  // Yeni sürüm etkinleşince sayfa bir kez yenilenir (eski sürümde kalınmaz)
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
 }
 function viewInstall() {
   const body = standalone() ? '<p class="note">Kokpit Cep ana ekrandan uygulama olarak açık. İnternet olmadan da çalışır.</p>'
@@ -834,6 +838,8 @@ function bindInstall(view) {
 
 /* ---------- Dosyayla eşitleme (masaüstü mobilesync.py ile aynı zarf) ---------- */
 const FORMAT = 'kokpit-cep';
+// Yayın etiketi: scripts/cep-yayinla.ps1 her yayında değiştirir; Eşitle ekranında görünür
+const APP_BUILD = '2.0.0.16 Â· 20261031-0015';
 function phonePackage() {
   const out = { format: FORMAT, version: 1, direction: 'telefon', app: 'Kokpit Cep', device: navigator.userAgent.slice(0, 80),
                 exported_at: `${TODAY}T${hm(Math.floor(nowMin()))}:00`, sessions: [], breaks: [], duties: [], tasks: [], leaves: [] };
@@ -905,14 +911,16 @@ function viewSync() {
   return viewInstall() + `
   <section class="panel">
     <h2>Masaüstü Kokpit ile eşitleme</h2>
-    <p class="note">Kayıtlar telefonda tutulur, internet gerekmez. Eşitleme dosyayla yapılır; dosyayı e-posta, kablo veya bulut klasörüyle taşıyabilirsiniz.</p>
+    <p class="note">Kayıtlar telefonda tutulur, internet gerekmez. Kayıtlar masaüstüne iki yolla gider: dosya olarak paylaşarak ya da metin olarak kopyalayıp yapıştırarak.</p>
     <div class="list">
       <div class="item"><span class="t">1</span><span class="d" style="white-space:normal"><b>Kokpit'e gönder:</b> telefondaki tüm kayıtlar tek dosya olur ve paylaşım menüsü açılır; dosyayı e-posta, WhatsApp, Drive veya Yakındaki Paylaşım ile bilgisayara gönderin. Masaüstünde Zaman Takip › Dosyadan Aktar ile açın; daha önce alınanlar tekrar eklenmez, farklı olanlar orada sorulur.</span><span></span></div>
+      <div class="item"><span class="t">1b</span><span class="d" style="white-space:normal"><b>Paylaşım çalışmazsa — Kayıtları kopyala:</b> kayıtlar panoya metin olarak kopyalanır. Kendinize WhatsApp/e-posta ile mesaj olarak gönderin; masaüstünde Dosyadan Aktar › <b>Panodan yapıştır</b>'a yapıştırın.</span><span></span></div>
       <div class="item"><span class="t">2</span><span class="d" style="white-space:normal"><b>Masaüstünden al:</b> masaüstünde Zaman Takip › Telefona Gönder ile kaydedilen dosyayı seçin. Hedefler, Jira işleri, izinler ve son 60 günün kayıtları gelir.</span><span></span></div>
     </div>
     <div class="grid2">
       <button class="btn primary" type="button" id="send-file" style="grid-column:auto">Kokpit'e gönder</button>
-      <label class="btn" style="cursor:pointer">Masaüstünden al<input type="file" id="recv-file" accept=".json,application/json" hidden></label>
+      <button class="btn" type="button" id="copy-records">Kayıtları kopyala</button>
+      <label class="btn" style="cursor:pointer;grid-column:1/-1">Masaüstünden al<input type="file" id="recv-file" accept=".json,.txt,application/json,text/plain" hidden></label>
     </div>
     <div class="facts">
       <div><span>Son gönderim</span><b class="num">${stamp(DATA.lastSent)}</b></div>
@@ -938,6 +946,7 @@ function viewSync() {
       <button class="btn danger" type="button" id="reset-demo">Örnek veriyi yükle</button>
       <button class="btn danger" type="button" id="clear-data">Tüm kayıtları sil</button>
     </div>
+    <p class="note">Sürüm: <span class="num">${esc(APP_BUILD)}</span>${standalone() ? ' · ana ekrandan açık' : ''}</p>
   </section>`;
 }
 
@@ -1107,6 +1116,13 @@ function render() {
   });
   bindRange(view);
   bindInstall(view);
+  const copyRec = document.getElementById('copy-records');
+  if (copyRec) copyRec.onclick = () => {
+    const text = JSON.stringify(phonePackage());
+    const done = () => { DATA.lastSent = `${TODAY}T${hm(Math.floor(nowMin()))}`; persist(); toast('Kayıtlar kopyalandı: kendinize mesaj olarak gönderin, masaüstünde Panodan yapıştır'); render(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => toast('Kopyalanamadı; Dosya içeriği bölümünden metni seçip kopyalayın'));
+    else toast('Kopyalanamadı; Dosya içeriği bölümünden metni seçip kopyalayın');
+  };
   const copy = document.getElementById('copy-export');
   if (copy) copy.onclick = () => {
     const ta = document.getElementById('export-preview');
