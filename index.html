@@ -203,6 +203,9 @@ body::before { background: var(--bg); }
 .sheet { box-shadow: 0 -12px 40px rgb(0 0 0 / .3); }
 .sheet::before { content: ""; width: 40px; height: 4px; border-radius: 4px; background: var(--line); align-self: center; margin-top: -6px; }
 
+/* Dokunulabilir liste satırı (izinler) */
+button.item.tap { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line); color: inherit; text-align: left; font: inherit; }
+button.item.tap:last-child { border-bottom: 0; }
 /* Gün sayfasındaki kayıt satırı düğmeleri */
 .rec-acts { display: flex; gap: 4px; }
 .mini { border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 4px 8px; font-size: 12px; font-weight: 600; min-height: 32px; }
@@ -331,6 +334,7 @@ const save = () => { DATA.lastChange = `${TODAY}T${hm(Math.floor(nowMin()))}`; t
 // Eski kayıtlarda görev dizisi yok: her gün aynı yapıya getirilir
 const EMPTY_DAY = () => ({ sessions: [], breaks: [], duties: [], tasks: [] });
 Object.values(DATA.days).forEach(d => { d.duties = d.duties || []; });
+(DATA.leaves || []).forEach((l, i) => { if (l.id == null) l.id = Date.now() + i; });
 const issues = () => DATA.issues && DATA.issues.length ? DATA.issues : ISSUES;
 
 /* ---------- Hedef dönemi: masaüstünden gelen dönemlerden o güne uyan (Kokpit target_for ile aynı seçim) ---------- */
@@ -536,7 +540,7 @@ function viewToday() {
     <div class="row" style="font-size:12px;color:var(--muted)"><span>${eb ? `En geç giriş ${eb}` : 'Giriş saati tanımsız'}${ea ? ` · en erken çıkış ${ea}` : ''}</span><span>${esc(periodFor(TODAY).name || 'Varsayılan hedef')}</span></div>
   </section>
   <section class="panel" aria-label="Bugünün kayıtları">
-    <span class="label">Bugünün kayıtları</span>
+    <div class="row"><span class="label">Bugünün kayıtları</span><button class="btn" type="button" data-day="${TODAY}" style="min-height:36px;padding:6px 12px">Düzenle / ekle</button></div>
     <div class="list">${events.length ? events.map(([t, txt, c]) => `<div class="item"><span class="t">${hm(t)}</span><span class="d"><i class="dot" style="background:${c}"></i>${esc(txt)}</span><span></span></div>`).join('') : '<p class="note">Henüz kayıt yok. Giriş yaparak başlayın.</p>'}</div>
   </section>`;
 }
@@ -579,9 +583,10 @@ function viewLeave() {
   </section>
   <section class="panel">
     <span class="label">Kayıtlar</span>
-    <div class="list">${list.map(l => `<div class="item"><span class="t">${l.start.slice(8)}.${l.start.slice(5, 7)}</span>
+    <div class="list">${list.map(l => `<button type="button" class="item tap" data-leave="${l.id}" aria-label="${esc(l.kind)} ${l.start} düzenle"><span class="t">${l.start.slice(8)}.${l.start.slice(5, 7)}</span>
       <span class="d">${esc(l.kind)}${l.end !== l.start ? ` · ${l.end.slice(8)}.${l.end.slice(5, 7)}'e kadar` : ''}</span>
-      ${l.from ? chip(`${l.from}–${l.to}`, 'info') : chip(l.start > TODAY ? 'planlı' : 'tam gün', l.start > TODAY ? 'live' : 'info')}</div>`).join('')}</div>
+      ${l.from ? chip(`${l.from}–${l.to}`, 'info') : chip(l.start > TODAY ? 'planlı' : 'tam gün', l.start > TODAY ? 'live' : 'info')}</button>`).join('')}</div>
+    <p class="note">Düzeltmek veya silmek için bir izne dokunun.</p>
   </section>`;
 }
 
@@ -624,19 +629,23 @@ function viewReport() {
 
 /* ---------- Dosya verme: claude.ai içinde indirme onayı, telefonda paylaş menüsü, yoksa indirme ---------- */
 const downloadsP = window.claude && window.claude.use ? window.claude.use('downloads').catch(() => null) : Promise.resolve(null);
-async function saveFile(name, text, mime) {
-  const file = new File([text], name, { type: mime });
-  const downloads = await downloadsP;
-  if (downloads) await downloads.save({ filename: name, data: text });
-  else if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: name });
-  else {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name;
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  }
+let claudeDownloads = null;
+downloadsP.then(d => { claudeDownloads = d; });
+// Paylaşım menüsü yalnızca dokunuşun hemen ardından açılabilir: bu işlev bekleme yapmadan çağrılır.
+// Telefonlar paylaşımda .json dosyasına izin vermediği için shareName verilirse içerik .txt olarak paylaşılır
+// (masaüstü Kokpit ikisini de tanır).
+function saveFile(name, text, mime, shareName) {
+  if (claudeDownloads) return claudeDownloads.save({ filename: name, data: text });
+  const shared = new File([text], shareName || name, { type: shareName ? 'text/plain' : mime });
+  if (navigator.canShare && navigator.canShare({ files: [shared] })) return navigator.share({ files: [shared], title: shareName || name });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new File([text], name, { type: mime })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  return Promise.resolve();
 }
 const fileError = e => {
   if (e && (e.name === 'AbortError' || e.code === 'declined')) return;
-  toast(e && e.code === 'rate_limited' ? 'Önceki kaydetme penceresi hâlâ açık' : 'Dosya oluşturulamadı');
+  toast(e && e.code === 'rate_limited' ? 'Önceki kaydetme penceresi hâlâ açık'
+    : `Dosya gönderilemedi${e && (e.message || e.name) ? `: ${e.message || e.name}` : ''}. Eşitle › Dosya içeriği › Panoya kopyala ile de aktarabilirsiniz.`);
 };
 
 /* ---------- Tarih aralığı raporu (Lüfer "Tarih Aralığı Raporu") ---------- */
@@ -709,7 +718,8 @@ function bindRange(view) {
   view.querySelectorAll('[data-range]').forEach(b => b.onclick = () => set(...b.dataset.range.split('|')));
   view.querySelector('#rg-csv').onclick = () => {
     const r = rangeReport(reportRange.from, reportRange.to);
-    saveFile(`kokpit-rapor-${r.from}_${r.to}.csv`, reportCsv(r), 'text/csv').then(() => toast('Rapor dosyası hazır'), fileError);
+    try { saveFile(`kokpit-rapor-${r.from}_${r.to}.csv`, reportCsv(r), 'text/csv').then(() => toast('Rapor dosyası hazır'), fileError); }
+    catch (e) { fileError(e); }
   };
 }
 
@@ -838,11 +848,13 @@ function phonePackage() {
   out.leaves = DATA.leaves.map(l => ({ kind: l.kind, start_date: l.start, end_date: l.end, start_time: l.from || null, end_time: l.to || null, status: l.status || 'Onaylandı' }));
   return out;
 }
-async function sendToDesktop() {
-  try {
-    await saveFile(`kokpit-cep-${TODAY}.json`, JSON.stringify(phonePackage(), null, 1), 'application/json');
-    DATA.lastSent = `${TODAY}T${hm(Math.floor(nowMin()))}`; save(); toast('Dosya hazır: masaüstünde Dosyadan Aktar ile açın'); render();
-  } catch (e) { fileError(e); }
+function sendToDesktop() {
+  let p;
+  try { p = saveFile(`kokpit-cep-${TODAY}.json`, JSON.stringify(phonePackage(), null, 1), 'application/json', `kokpit-cep-${TODAY}.txt`); }
+  catch (e) { fileError(e); return; }
+  p.then(() => {
+    DATA.lastSent = `${TODAY}T${hm(Math.floor(nowMin()))}`; persist(); toast('Dosya gönderildi: masaüstünde Zaman Takip › Dosyadan Aktar ile açın'); render();
+  }, fileError);
 }
 // Masaüstü dosyası: hedefler ve işler değişir; kayıtlar telefondakilerle birleşir (5 dk içinde başlayan aynı kayıt sayılır)
 function mergeDesktop(pkg) {
@@ -895,7 +907,7 @@ function viewSync() {
     <h2>Masaüstü Kokpit ile eşitleme</h2>
     <p class="note">Kayıtlar telefonda tutulur, internet gerekmez. Eşitleme dosyayla yapılır; dosyayı e-posta, kablo veya bulut klasörüyle taşıyabilirsiniz.</p>
     <div class="list">
-      <div class="item"><span class="t">1</span><span class="d" style="white-space:normal"><b>Kokpit'e gönder:</b> telefondaki tüm kayıtlar tek dosya olur. Masaüstünde Zaman Takip › Dosyadan Aktar ile açın; daha önce alınanlar tekrar eklenmez, farklı olanlar orada sorulur.</span><span></span></div>
+      <div class="item"><span class="t">1</span><span class="d" style="white-space:normal"><b>Kokpit'e gönder:</b> telefondaki tüm kayıtlar tek dosya olur ve paylaşım menüsü açılır; dosyayı e-posta, WhatsApp, Drive veya Yakındaki Paylaşım ile bilgisayara gönderin. Masaüstünde Zaman Takip › Dosyadan Aktar ile açın; daha önce alınanlar tekrar eklenmez, farklı olanlar orada sorulur.</span><span></span></div>
       <div class="item"><span class="t">2</span><span class="d" style="white-space:normal"><b>Masaüstünden al:</b> masaüstünde Zaman Takip › Telefona Gönder ile kaydedilen dosyayı seçin. Hedefler, Jira işleri, izinler ve son 60 günün kayıtları gelir.</span><span></span></div>
     </div>
     <div class="grid2">
@@ -1035,27 +1047,37 @@ function backupReminder() {
     <button class="btn" type="button" data-goto="esitle" style="min-height:40px">Gönder</button></div></section>`;
 }
 
-function sheetLeave() {
-  openSheet(`<h3>İzin ekle</h3>
+function sheetLeave(cur = null) {
+  const kinds = cur && !LEAVE_KINDS.includes(cur.kind) ? [cur.kind, ...LEAVE_KINDS] : LEAVE_KINDS;
+  const start = cur ? cur.start : addDays(TODAY, 1);
+  openSheet(`<h3>${cur ? 'İzni düzenle' : 'İzin ekle'}</h3>
     <form id="leave-form" class="picker">
-      <label class="field">Tür<select id="lv-kind">${LEAVE_KINDS.map(k => `<option>${k}</option>`).join('')}</select></label>
+      <label class="field">Tür<select id="lv-kind">${kinds.map(k => `<option ${cur && cur.kind === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select></label>
       <div class="seg" role="group" aria-label="İzin süresi"><button type="button" id="lv-full" aria-pressed="true">Tam gün</button><button type="button" id="lv-hourly" aria-pressed="false">Saatlik</button></div>
-      <div class="grid2"><label class="field">Başlangıç<input type="date" id="lv-start" value="${addDays(TODAY, 1)}"></label><label class="field" id="lv-end-wrap">Bitiş<input type="date" id="lv-end" value="${addDays(TODAY, 1)}"></label></div>
-      <div class="grid2" id="lv-hours" hidden><label class="field">Saat<input type="time" id="lv-from" value="08:00"></label><label class="field">Bitiş saati<input type="time" id="lv-to" value="10:00"></label></div>
-      <button class="btn primary" type="submit">Kaydet</button>
+      <div class="grid2"><label class="field">Başlangıç<input type="date" id="lv-start" value="${start}"></label><label class="field" id="lv-end-wrap">Bitiş<input type="date" id="lv-end" value="${cur ? cur.end : start}"></label></div>
+      <div class="grid2" id="lv-hours" hidden><label class="field">Saat<input type="time" id="lv-from" value="${cur && cur.from || '08:00'}"></label><label class="field">Bitiş saati<input type="time" id="lv-to" value="${cur && cur.to || '10:00'}"></label></div>
+      <button class="btn primary" type="submit">${cur ? 'Güncelle' : 'Kaydet'}</button>
+      ${cur ? '<button class="btn danger" type="button" id="lv-delete">İzni sil</button>' : ''}
     </form>`, close => {
     let hourly = false;
     const setMode = h => { hourly = h; document.getElementById('lv-full').setAttribute('aria-pressed', !h); document.getElementById('lv-hourly').setAttribute('aria-pressed', h);
       document.getElementById('lv-hours').hidden = !h; document.getElementById('lv-end-wrap').hidden = h; };
     document.getElementById('lv-full').onclick = () => setMode(false);
     document.getElementById('lv-hourly').onclick = () => setMode(true);
+    if (cur && cur.from) setMode(true);
+    const del = document.getElementById('lv-delete');
+    if (del) del.onclick = () => {
+      if (!confirm('Bu izin silinsin mi?')) return;
+      DATA.leaves = DATA.leaves.filter(x => x !== cur); save(); close(); toast('İzin silindi'); render();
+    };
     document.getElementById('leave-form').onsubmit = e => {
       e.preventDefault();
       const start = document.getElementById('lv-start').value, end = hourly ? start : document.getElementById('lv-end').value;
       if (!start || end < start) { toast('Bitiş tarihi başlangıçtan önce olamaz'); return; }
-      const lv = { id: Date.now(), kind: document.getElementById('lv-kind').value, start, end };
+      const lv = { id: cur ? cur.id : Date.now(), kind: document.getElementById('lv-kind').value, start, end, status: cur && cur.status || 'Onaylandı' };
       if (hourly) { lv.from = document.getElementById('lv-from').value; lv.to = document.getElementById('lv-to').value; if (lv.to <= lv.from) { toast('Bitiş saati başlangıçtan sonra olmalı'); return; } }
-      DATA.leaves.push(lv); save(); close(); toast('İzin kaydedildi'); render();
+      if (cur) DATA.leaves[DATA.leaves.indexOf(cur)] = lv; else DATA.leaves.push(lv);
+      save(); close(); toast(cur ? 'İzin güncellendi' : 'İzin kaydedildi'); render();
     };
   });
 }
@@ -1076,7 +1098,8 @@ function render() {
   view.querySelectorAll('[data-sheet="break"]').forEach(b => b.onclick = sheetBreak);
   view.querySelectorAll('[data-sheet="duty"]').forEach(b => b.onclick = sheetDuty);
   view.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { tab = b.dataset.goto; render(); window.scrollTo(0, 0); });
-  view.querySelectorAll('[data-sheet="leave"]').forEach(b => b.onclick = sheetLeave);
+  view.querySelectorAll('[data-sheet="leave"]').forEach(b => b.onclick = () => sheetLeave());
+  view.querySelectorAll('[data-leave]').forEach(b => b.onclick = () => sheetLeave(DATA.leaves.find(l => String(l.id) === b.dataset.leave)));
   view.querySelectorAll('[data-day]').forEach(b => b.onclick = () => sheetDay(b.dataset.day));
   view.querySelectorAll('[data-cal]').forEach(b => b.onclick = () => {
     const [y, m] = calMonth.split('-').map(Number), d = new Date(y, m - 1 + Number(b.dataset.cal), 1);
