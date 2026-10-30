@@ -6,7 +6,7 @@
  * Uygulama dosyası değişince VERSION artırılır; eski önbellekler silinir.
  * Bildirime dokunulunca uygulama öne getirilir.
  */
-const VERSION = 'kokpit-cep-20261030-2327';
+const VERSION = 'kokpit-cep-20261030-2332';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
   './icons/icon-maskable-192.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png', './icons/icon.svg'];
 
