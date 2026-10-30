@@ -839,7 +839,7 @@ function bindInstall(view) {
 /* ---------- Dosyayla eşitleme (masaüstü mobilesync.py ile aynı zarf) ---------- */
 const FORMAT = 'kokpit-cep';
 // Yayın etiketi: scripts/cep-yayinla.ps1 her yayında değiştirir; Eşitle ekranında görünür
-const APP_BUILD = '2.0.0.16 Â· 20261031-0015';
+const APP_BUILD = '2.0.0.16 / 20261031-0016';
 function phonePackage() {
   const out = { format: FORMAT, version: 1, direction: 'telefon', app: 'Kokpit Cep', device: navigator.userAgent.slice(0, 80),
                 exported_at: `${TODAY}T${hm(Math.floor(nowMin()))}:00`, sessions: [], breaks: [], duties: [], tasks: [], leaves: [] };
